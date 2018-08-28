@@ -21,3 +21,8 @@ $RECYCLE.BIN/
 # =========================
 # Operating System Files
 # =========================
+
+HackMatcher/bin
+HackMatcher/obj
+*.suo
+.vs
