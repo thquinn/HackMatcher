@@ -1,5 +1,5 @@
 ﻿// TODO
-//      - Background elements are being mistaken for tiles. Make sure maxY is aligned properly and align vertical strips of pixels.
+//      - Is there a bug in search? We should never be grab/dropping consecutively in the same column.
 //      - Search is slow.
 //      - Reduce node limit when there are few tiles.
 //      - Knock down tall columns.
@@ -24,7 +24,8 @@ namespace HackMatcher {
         public static IntPtr selfHandle;
 
         static void Main(string[] args) {
-            // Launch HACK*MATCH in 1366*768 resolution.
+            // Set EXAPUNKS to 1366*768 resolution and disable HACK*MATCH CRT effect.
+            // Launch HACK*MATCH and start a game, then launch the solver.
             // Each tile is 51px apart.
 
             Process[] processes = Process.GetProcessesByName("EXAPUNKS");
@@ -44,10 +45,19 @@ namespace HackMatcher {
             int grabberCol = 3;
             Piece lastHeld = null;
             while (true) {
-                //Image image = Image.FromFile("last.png");
-                Image image = ScreenCapture.CaptureWindow(hWnd);
-                image.Save("last.png");
-                Piece[,] board = ProcessBitmap(new Bitmap(image));
+                Piece[,] board = null;
+                while (board == null) {
+                    //Image image = Image.FromFile("last.png");
+                    Image image = ScreenCapture.CaptureWindow(hWnd);
+                    Bitmap bitmap = new Bitmap(364, 436, System.Drawing.Imaging.PixelFormat.Format24bppRgb);
+                    image.Save("last.png");
+                    using (Graphics g = Graphics.FromImage(bitmap)) {
+                        Rectangle srcRect = new Rectangle(312, 110, 364, 436);
+                        Rectangle destRect = new Rectangle(0, 0, 364, 436);
+                        g.DrawImage(image, destRect, srcRect, GraphicsUnit.Pixel);
+                    }
+                    board = CV.ReadBitmap(bitmap);
+                }
                 State state = new State(board, null);
                 state.held = lastHeld;
                 State finalState;
@@ -61,62 +71,12 @@ namespace HackMatcher {
                     Console.WriteLine(move);
                 }
                 Util32.ExecuteMoves(new Queue<Move>(moves), grabberCol);
-                grabberCol = moves[moves.Count - 1].col;
+                grabberCol = 0;// moves[moves.Count - 1].col;
                 lastHeld = finalState.held;
-                Thread.Sleep(250);
+                Thread.Sleep(750);
             }
         }
-        static Piece[,] ProcessBitmap(Bitmap bitmap) {
-            // Find the bottom-most piece on the board.
-            int maxY = int.MinValue;
-            for (int x = 0; x < 7; x++) {
-                for (int py = 560; py >= 115; py--) {
-                    int px = 357 + 51 * x;
-                    Color color = bitmap.GetPixel(px, py);
-                    float hue = color.GetHue();
-                    float brightness = Math.Max(color.R / 255f, Math.Max(color.G / 255f, color.B / 255f));
-                    float saturation = brightness == 0 ? 0 : 1 - Math.Min(color.R / 255f, Math.Min(color.G / 255f, color.B / 255f)) / brightness;
-                    // Hack to get around a bit of the background.
-                    if (px == 663 && Math.Abs(hue - 168) < 2) {
-                        continue;
-                    }
-                    if (saturation >= .6f && brightness >= .4f) {
-                        if (py > maxY) {
-                            maxY = py;
-                        }
-                        break;
-                    }
-                }
-            }
-            // Realign to examine the center-right edge of the piece.
-            maxY -= 23;
-            Piece[,] board = new Piece[7, 10];
-            // Determine board pieces.
-            for (int x = 0; x < 7; x++) {
-                for (int py = maxY; py >= 115; py -= 51) {
-                    int px = 357 + 51 * x;
-                    int y = (py - 115) / 51;
-                    Console.WriteLine(x + ", " + y);
-                    Console.WriteLine(px + ", " + py);
-                    board[x, y] = Piece.FromColor(bitmap.GetPixel(px, py));
-                    if (board[x, y] != null && board[x, y].gem) {
-                        board[x, y].DetermineGemColor(bitmap, px, py);
-                    }
-                    if (board[x, y] != null) {
-                        Console.WriteLine(board[x, y].ToString());
-                    }
-                }
-            }
-            Console.WriteLine();
-            for (int y = 0; y < 10; y++) {
-                for (int x = 0; x < 7; x++) {
-                    Console.Write(board[x, y] == null ? "" : board[x, y].ToString());
-                    Console.Write("\t\t");
-                }
-                Console.WriteLine();
-            }
-            return board;
-        }
+        
         static List<Move> FindMoves(State state, out State finalState) {
             Console.WriteLine("Searching for a move...");
             Queue<State> queue = new Queue<State>();
@@ -154,8 +114,8 @@ namespace HackMatcher {
         }
     }
 
-    enum PieceColor { RED, PINK, YELLOW, TEAL, PURPLE, UNKNOWN };
-    class Piece {
+    public enum PieceColor { RED, PINK, YELLOW, TEAL, PURPLE, UNKNOWN };
+    public class Piece {
         public PieceColor color;
         public bool gem;
 
@@ -167,74 +127,6 @@ namespace HackMatcher {
             this.color = other.color;
             this.gem = other.gem;
         }
-
-        public static Piece FromColor(Color color) {
-            float hue = color.GetHue();
-            float brightness = Math.Max(color.R / 255f, Math.Max(color.G / 255f, color.B / 255f));
-            float saturation = brightness == 0 ? 0 : 1 - Math.Min(color.R / 255f, Math.Min(color.G / 255f, color.B / 255f)) / brightness;
-            Console.WriteLine(hue + ", " + saturation + " , " + brightness);
-            // Determine if gem.
-            if (hue >= 195 && hue <= 205 && saturation <= .25f && brightness > .4f) {
-                return new Piece(PieceColor.RED, true);
-            }
-            // Determine normal piece presence/color.
-            if (saturation < .55f || brightness < .4f) {
-                return null;
-            }
-            PieceColor pieceColor = PieceColor.RED;
-            if (hue >= 351 && hue <= 353) {
-                pieceColor = PieceColor.RED;
-            } else if (hue >= 310 && hue <= 322) {
-                pieceColor = PieceColor.PINK;
-            } else if (hue >= 38 && hue <= 40) {
-                pieceColor = PieceColor.YELLOW;
-            } else if (hue >= 168 && hue <= 172) {
-                pieceColor = PieceColor.TEAL;
-            } else if (hue >= 223 && hue <= 245) {
-                pieceColor = PieceColor.PURPLE;
-            } else {
-                pieceColor = PieceColor.UNKNOWN;
-                Debug.Fail("Couldn't determine piece color.");
-            }
-
-            return new Piece(pieceColor, false);
-        }
-        public void DetermineGemColor(Bitmap bitmap, int x, int y) {
-            float maxSat = float.MinValue;
-            float maxHue = -1;
-            for (int dy = -4; dy <= 8; dy++) {
-                Color color = bitmap.GetPixel(x - 11, y + dy);
-                float hue = color.GetHue();
-                float brightness = Math.Max(color.R / 255f, Math.Max(color.G / 255f, color.B / 255f));
-                float saturation = brightness == 0 ? 0 : 1 - Math.Min(color.R / 255f, Math.Min(color.G / 255f, color.B / 255f)) / brightness;
-                if (brightness < .3f) {
-                    continue;
-                }
-                if (saturation > maxSat) {
-                    maxSat = saturation;
-                    maxHue = hue;
-                }
-            }
-            Debug.Assert(maxHue >= 0);
-            if ((maxHue >= 351 && maxHue <= 360) || maxHue < 5) {
-                color = PieceColor.RED;//
-            }
-            else if (maxHue >= 280 && maxHue <= 320) {
-                color = PieceColor.PINK;//
-            }
-            else if (maxHue >= 20 && maxHue <= 45) {
-                color = PieceColor.YELLOW;//
-            }
-            else if (maxHue >= 164 && maxHue <= 195) {
-                color = PieceColor.TEAL;//
-            }
-            else if (maxHue >= 225 && maxHue <= 250) {
-                color = PieceColor.PURPLE;
-            } else {
-                color = PieceColor.UNKNOWN;
-                Debug.Fail("Couldn't determine gem color.");
-            }
-        }
         
         public override string ToString() {
             return color.ToString() + (gem ? "!" : "");
@@ -242,9 +134,18 @@ namespace HackMatcher {
         public string ToString(bool abbrev) {
             return abbrev ? (int)color + (gem ? "!" : "") : ToString();
         }
+        public override bool Equals(object obj) {
+            if (obj.GetType() != typeof(Piece))
+                return false;
+            Piece other = (Piece)obj;
+            return ToString() == other.ToString();
+        }
+        public override int GetHashCode() {
+            return ToString().GetHashCode();
+        }
     }
 
-    class State {
+    public class State {
         static int[][] NEIGHBORS = new int[][] { new int[] { -1, 0 }, new int[] { 1, 0 }, new int[] { 0, -1 }, new int[] { 0, 1 } };
         static StringBuilder sb = new StringBuilder();
         Piece[,] board;

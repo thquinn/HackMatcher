@@ -9,7 +9,7 @@ using WindowsInput.Native;
 
 namespace HackMatcher {
     public class Util32 {
-        static int PAUSE_MS = 34;
+        static int PAUSE_MS = 20;
         public static IntPtr handle;
         public static InputSimulator sim = new InputSimulator();
 
@@ -43,6 +43,12 @@ namespace HackMatcher {
                 sim.Keyboard.KeyDown(keyCode);
                 Thread.Sleep(PAUSE_MS);
                 sim.Keyboard.KeyUp(keyCode);
+                Thread.Sleep(PAUSE_MS);
+            }
+            for (int i = 0; i < 6; i++) {
+                sim.Keyboard.KeyDown(VirtualKeyCode.VK_A);
+                Thread.Sleep(PAUSE_MS);
+                sim.Keyboard.KeyUp(VirtualKeyCode.VK_A);
                 Thread.Sleep(PAUSE_MS);
             }
         }
