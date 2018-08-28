@@ -1,14 +1,7 @@
 ﻿// TODO
-//      - Is there a bug in search? We should never be grab/dropping consecutively in the same column.
 //      - Search is slow.
-//      - Reduce node limit when there are few tiles.
-//      - Knock down tall columns.
-//          - Work towards some heuristic
-//      - Failure handling.
-//          - Don't make moves while there are unknown tiles or holes in the grid.
-//          - If an input gets dropped, redetermine grabbed position and drop any held tile.
-//      - Hold K while there are no tall columns.
-//      - Ponder moves while executing the previous set.
+//          - Improve bottlenecks.
+//          - Parallel While
 
 using System;
 using System.Collections.Generic;
@@ -24,9 +17,8 @@ namespace HackMatcher {
         public static IntPtr selfHandle;
 
         static void Main(string[] args) {
-            // Set EXAPUNKS to 1366*768 resolution and disable HACK*MATCH CRT effect.
-            // Launch HACK*MATCH and start a game, then launch the solver.
-            // Each tile is 51px apart.
+            // Run EXAPUNKS at 1366*768 resolution and disable HACK*MATCH CRT effect in the settings.
+            // Launch HACK*MATCH, wait for the menu to show, then launch the solver.
 
             Process[] processes = Process.GetProcessesByName("EXAPUNKS");
             if (processes.Length == 0) {
@@ -42,48 +34,44 @@ namespace HackMatcher {
             }
             Util32.ForegroundWindow();
 
-            int grabberCol = 3;
-            Piece lastHeld = null;
             while (true) {
-                Piece[,] board = null;
-                while (board == null) {
+                State state = null;
+                Color heldColor = Color.White;
+                while (state == null) {
                     //Image image = Image.FromFile("last.png");
                     Image image = ScreenCapture.CaptureWindow(hWnd);
-                    Bitmap bitmap = new Bitmap(364, 436, System.Drawing.Imaging.PixelFormat.Format24bppRgb);
-                    image.Save("last.png");
+                    Bitmap bitmap = new Bitmap(360, 540, System.Drawing.Imaging.PixelFormat.Format24bppRgb);
                     using (Graphics g = Graphics.FromImage(bitmap)) {
-                        Rectangle srcRect = new Rectangle(312, 110, 364, 436);
-                        Rectangle destRect = new Rectangle(0, 0, 364, 436);
+                        Rectangle srcRect = new Rectangle(312, 110, 360, 540);
+                        Rectangle destRect = new Rectangle(0, 0, 360, 540);
                         g.DrawImage(image, destRect, srcRect, GraphicsUnit.Pixel);
                     }
-                    board = CV.ReadBitmap(bitmap);
+                    bitmap.Save("last.png");
+                    state = CV.ReadBitmap(bitmap);
+                    heldColor = new Bitmap(image).GetPixel(320, 610);
                 }
-                State state = new State(board, null);
-                state.held = lastHeld;
-                State finalState;
-                List<Move> moves = FindMoves(state, out finalState);
+                Console.WriteLine("Holding: " + state.held);
+                List<Move> moves = FindMoves(state);
                 if (moves == null) {
-                    Thread.Sleep(1000);
                     continue;
                 }
                 
                 foreach (Move move in moves) {
                     Console.WriteLine(move);
                 }
-                Util32.ExecuteMoves(new Queue<Move>(moves), grabberCol);
-                grabberCol = 0;// moves[moves.Count - 1].col;
-                lastHeld = finalState.held;
-                Thread.Sleep(750);
+                Util32.ExecuteMoves(new Queue<Move>(moves));
+                Thread.Sleep(500);
             }
         }
         
-        static List<Move> FindMoves(State state, out State finalState) {
+        static List<Move> FindMoves(State state) {
             Console.WriteLine("Searching for a move...");
             Queue<State> queue = new Queue<State>();
             Dictionary<State, Tuple<State, Move>> parents = new Dictionary<State, Tuple<State, Move>>();
             queue.Enqueue(state);
-            List<Move> moves = new List<Move>();
-            while (queue.Count > 0 && parents.Count < 50000) {
+            double maxEval = double.MinValue;
+            State maxState = null;
+            while (queue.Count > 0 && parents.Count < 25000) {
                 State current = queue.Dequeue();
                 Dictionary<Move, State> children = current.GetChildren();
                 foreach (KeyValuePair<Move, State> child in children) {
@@ -94,23 +82,28 @@ namespace HackMatcher {
                     if (parents.Count % 25000 == 0) {
                         Console.WriteLine("Searched " + parents.Count + " states.");
                     }
-                    // Check for match.
-                    if (child.Value.HasMatch()) {
-                        State node = child.Value;
-                        while (parents.ContainsKey(node)) {
-                            Tuple<State, Move> parent = parents[node];
-                            moves.Add(parent.Item2);
-                            node = parent.Item1;
-                        }
-                        moves.Reverse();
-                        finalState = child.Value;
-                        return moves;
-                    }
                     queue.Enqueue(child.Value);
+                    // Check eval.
+                    double eval = child.Value.Eval();
+                    if (eval > maxEval) {
+                        maxEval = eval;
+                        maxState = child.Value;
+                    }
                 }
             }
-            finalState = null;
-            return null;
+            Console.WriteLine("Best eval: " + maxEval);
+            List<Move> moves = new List<Move>();
+            if (maxState == null) {
+                moves.Add(new Move(Operation.GRAB_OR_DROP, 0));
+                return moves;
+            }
+            while (parents.ContainsKey(maxState)) {
+                Tuple<State, Move> parent = parents[maxState];
+                moves.Add(parent.Item2);
+                maxState = parent.Item1;
+            }
+            moves.Reverse();
+            return moves;
         }
     }
 
@@ -164,7 +157,8 @@ namespace HackMatcher {
             }
         }
 
-        public bool HasMatch() {
+        public double Eval() {
+            double eval = 0;
             HashSet<Tuple<int, int>> toCheck = new HashSet<Tuple<int, int>>();
             for (int x = 0; x < 7; x++) {
                 for (int y = 0; y < board.GetLength(1); y++) {
@@ -179,6 +173,7 @@ namespace HackMatcher {
                 enumerator.MoveNext();
                 Tuple<int, int> start = enumerator.Current;
                 int count = 1;
+                bool match = false;
                 Queue<Tuple<int, int>> queue = new Queue<Tuple<int, int>>();
                 queue.Enqueue(start);
                 toCheck.Remove(start);
@@ -203,14 +198,27 @@ namespace HackMatcher {
                         }
                         count++;
                         if (count >= (board[start.Item1, start.Item2].gem ? 2 : 4)) {
-                            return true;
+                            match = true;
                         }
                         queue.Enqueue(neighbor);
                         toCheck.Remove(neighbor);
                     }
                 }
+                eval += count * count;
+                if (match) {
+                    eval += 1000;
+                }
             }
-            return false;
+            for (int x = 0; x < 7; x++) {
+                int y = board.GetLength(1) - 1;
+                while (y > 0 && board[x, y] == null) {
+                    y--;
+                }
+                if (y > 3) {
+                    eval -= 200 * Math.Pow(2, y - 3);
+                }
+            }
+            return eval;
         }
 
         public Dictionary<Move, State> GetChildren() {

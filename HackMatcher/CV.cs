@@ -23,9 +23,9 @@ namespace HackMatcher {
             TEMPLATES.Add(new Piece(PieceColor.PURPLE, true), new Mat("templates/purple_bomb.png"));
         }
 
-        public static Piece[,] ReadBitmap(Bitmap bitmap) {
+        public static State ReadBitmap(Bitmap bitmap) {
             Mat image = OpenCvSharp.Extensions.BitmapConverter.ToMat(bitmap);
-            Piece[,] pieces = new Piece[7, 10];
+            Piece[,] pieces = new Piece[7, 9];
             ConcurrentDictionary<Piece, List<Point>> points = new ConcurrentDictionary<Piece, List<Point>>();
             Parallel.ForEach(TEMPLATES.Keys, (type) => {
                 points[type] = FindAll(image, type);
@@ -39,11 +39,19 @@ namespace HackMatcher {
                         minY = p.Y;
                 }
             }
+            Piece held = null;
             foreach (KeyValuePair<Piece, List<Point>> kvp in points) {
                 Piece type = kvp.Key;
                 foreach (Point point in kvp.Value) {
                     int x = (int)Math.Round((point.X - minX) / 51f);
                     int y = (int)Math.Round((point.Y - minY) / 51f);
+                    if (y > 8) {
+                        if (held != null) {
+                            Console.WriteLine("Multiple held pieces detected.");
+                        }
+                        held = new Piece(type);
+                        continue;
+                    }
                     if (pieces[x, y] != null && !pieces[x, y].Equals(type)) {
                         Console.WriteLine("Different pieces found in same grid coordinate!");
                         return null;
@@ -58,20 +66,20 @@ namespace HackMatcher {
                     if (pieces[x, y] != null) {
                         piece = true;
                     } else if (piece && pieces[x, y] == null) {
-                        Console.WriteLine("Hole in grid!");
+                        Console.WriteLine("Hole in grid at " + x + ", " + y + "!");
                         return null;
                     }
                 }
             }
-            return pieces;
+            return new State(pieces, held);
         }
         private static List<Point> FindAll(Mat image, Piece type) {
-            Mat result = image.MatchTemplate(TEMPLATES[type], TemplateMatchModes.CCorrNormed);
+            Mat result = image.MatchTemplate(TEMPLATES[type], TemplateMatchModes.CCoeffNormed);
             Mat.Indexer<float> indexer = result.GetGenericIndexer<float>();
             List<Point> points = new List<Point>();
             for (int x = 0; x < result.Cols; x++) {
                 for (int y = 0; y < result.Rows; y++) {
-                    if (indexer[y, x] > .9f) {
+                    if (indexer[y, x] > .85f) {
                         points.Add(new Point(x, y));
                     }
                 }

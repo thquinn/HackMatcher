@@ -9,7 +9,7 @@ using WindowsInput.Native;
 
 namespace HackMatcher {
     public class Util32 {
-        static int PAUSE_MS = 20;
+        static int PAUSE_MS = 18;
         public static IntPtr handle;
         public static InputSimulator sim = new InputSimulator();
 
@@ -22,7 +22,8 @@ namespace HackMatcher {
             //Thread.Sleep(1000);
         }
 
-        public static void ExecuteMoves(Queue<Move> moves, int grabberCol) {
+        public static void ExecuteMoves(Queue<Move> moves) {
+            int grabberCol = 0;
             while (moves.Count > 0) {
                 Move move = moves.Dequeue();
                 while (move.col < grabberCol) {
