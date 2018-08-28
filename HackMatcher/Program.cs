@@ -51,7 +51,8 @@ namespace HackMatcher {
                     heldColor = new Bitmap(image).GetPixel(320, 610);
                 }
                 Console.WriteLine("Holding: " + state.held);
-                List<Move> moves = FindMoves(state);
+                bool hasMatch;
+                List<Move> moves = FindMoves(state, out hasMatch);
                 if (moves == null) {
                     continue;
                 }
@@ -60,11 +61,15 @@ namespace HackMatcher {
                     Console.WriteLine(move);
                 }
                 Util32.ExecuteMoves(new Queue<Move>(moves));
-                Thread.Sleep(500);
+                if (hasMatch) {
+                    Console.WriteLine("Found match, sleeping 500ms...");
+                    Thread.Sleep(500);
+                }
             }
         }
-        
-        static List<Move> FindMoves(State state) {
+
+        static List<Move> FindMoves(State state, out bool hasMatch) {
+            hasMatch = false;
             Console.WriteLine("Searching for a move...");
             Queue<State> queue = new Queue<State>();
             Dictionary<State, Tuple<State, Move>> parents = new Dictionary<State, Tuple<State, Move>>();
@@ -85,6 +90,7 @@ namespace HackMatcher {
                     queue.Enqueue(child.Value);
                     // Check eval.
                     double eval = child.Value.Eval();
+                    eval -= parents.Count / 10000000f;
                     if (eval > maxEval) {
                         maxEval = eval;
                         maxState = child.Value;
@@ -103,6 +109,9 @@ namespace HackMatcher {
                 maxState = parent.Item1;
             }
             moves.Reverse();
+            if (maxState.hasMatch) {
+                hasMatch = true;
+            }
             return moves;
         }
     }
@@ -143,10 +152,12 @@ namespace HackMatcher {
         static StringBuilder sb = new StringBuilder();
         Piece[,] board;
         public Piece held;
+        public bool hasMatch;
 
         public State(Piece[,] board, Piece held) {
             this.board = board;
             this.held = held;
+            hasMatch = false;
         }
         public State(State other) {
             board = (Piece[,])other.board.Clone();
@@ -155,9 +166,11 @@ namespace HackMatcher {
             } else {
                 held = null;
             }
+            hasMatch = true;
         }
 
         public double Eval() {
+            hasMatch = false;
             double eval = 0;
             HashSet<Tuple<int, int>> toCheck = new HashSet<Tuple<int, int>>();
             for (int x = 0; x < 7; x++) {
@@ -199,6 +212,7 @@ namespace HackMatcher {
                         count++;
                         if (count >= (board[start.Item1, start.Item2].gem ? 2 : 4)) {
                             match = true;
+                            hasMatch = true;
                         }
                         queue.Enqueue(neighbor);
                         toCheck.Remove(neighbor);
