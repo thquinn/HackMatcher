@@ -13,8 +13,8 @@ In the EXAPUNKS options, make it a 1366x768 window and disable the CRT effect in
 
 ## What's broken?
 More like "what's *not* broken?" The agent definitely won't get 100,000+ points every time; you may need to leave it going for an hour or so.
-* Search is only fast enough to handle ~25K game states on my 6th-gen i7. You may need to lower this on slower processors to get the agent playing at a reasonable speed. The low node count means that it will often miss good, complex moves.
-* Piece recognition isn't 100%. It sometimes mistakes bombs for each other, and red/pink/purple pieces very rarely.
+* Search is only fast enough to handle ~25K game states on my 6th-gen i7. Lower the node count on slower processors to get the agent playing at a reasonable speed. 25K is already low enough that it misses good moves, but it should be functional even as low as 4K.
+* Piece recognition isn't 100%. It mistakes bombs for each other, and red/pink/purple pieces sometimes too.
 * Inputs occasionally get dropped, which is why I have it reset to the first column after every move. When grab/drops are missed, you'll see the agent add pieces to an already tall column when it thinks it's removing them. If input was more consistent, the agent could be sped up and the occasional stupid game over could be prevented.
 
 ## Standard Disclaimer
