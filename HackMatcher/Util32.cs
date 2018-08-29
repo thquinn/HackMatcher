@@ -14,12 +14,10 @@ namespace HackMatcher {
         public static InputSimulator sim = new InputSimulator();
 
         public static void ForegroundWindow() {
+            IntPtr ptr = GetConsoleWindow();
+            MoveWindow(ptr, 300, 200, 1000, 400, true);
             SetForegroundWindow(Program.selfHandle);
             SetForegroundWindow(handle);
-            //sim.Keyboard.KeyDown(VirtualKeyCode.VK_J);
-            //Thread.Sleep(PAUSE_MS);
-            //sim.Keyboard.KeyUp(VirtualKeyCode.VK_J);
-            //Thread.Sleep(1000);
         }
 
         public static void ExecuteMoves(Queue<Move> moves) {
@@ -56,5 +54,9 @@ namespace HackMatcher {
 
         [DllImport("user32.dll")]
         internal static extern IntPtr SetForegroundWindow(IntPtr hWnd);
+        [DllImport("kernel32.dll", SetLastError = true)]
+        static extern IntPtr GetConsoleWindow();
+        [DllImport("user32.dll", SetLastError = true)]
+        internal static extern bool MoveWindow(IntPtr hWnd, int X, int Y, int nWidth, int nHeight, bool bRepaint);
     }
 }

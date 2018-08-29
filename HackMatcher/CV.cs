@@ -79,7 +79,7 @@ namespace HackMatcher {
             List<Point> points = new List<Point>();
             for (int x = 0; x < result.Cols; x++) {
                 for (int y = 0; y < result.Rows; y++) {
-                    if (indexer[y, x] > .85f) {
+                    if (indexer[y, x] > .8625f) {
                         points.Add(new Point(x, y));
                     }
                 }

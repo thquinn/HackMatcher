@@ -51,8 +51,7 @@ namespace HackMatcher {
                     heldColor = new Bitmap(image).GetPixel(320, 610);
                 }
                 Console.WriteLine("Holding: " + state.held);
-                bool hasMatch;
-                List<Move> moves = FindMoves(state, out hasMatch);
+                List<Move> moves = FindMoves(state, out bool hasMatch);
                 if (moves == null) {
                     continue;
                 }
@@ -119,22 +118,22 @@ namespace HackMatcher {
     public enum PieceColor { RED, PINK, YELLOW, TEAL, PURPLE, UNKNOWN };
     public class Piece {
         public PieceColor color;
-        public bool gem;
+        public bool bomb;
 
-        public Piece(PieceColor color, bool gem) {
+        public Piece(PieceColor color, bool bomb) {
             this.color = color;
-            this.gem = gem;
+            this.bomb = bomb;
         }
         public Piece(Piece other) {
             this.color = other.color;
-            this.gem = other.gem;
+            this.bomb = other.bomb;
         }
         
         public override string ToString() {
-            return color.ToString() + (gem ? "!" : "");
+            return color.ToString() + (bomb ? "!" : "");
         }
         public string ToString(bool abbrev) {
-            return abbrev ? (int)color + (gem ? "!" : "") : ToString();
+            return abbrev ? (int)color + (bomb ? "!" : "") : ToString();
         }
         public override bool Equals(object obj) {
             if (obj.GetType() != typeof(Piece))
@@ -153,6 +152,7 @@ namespace HackMatcher {
         Piece[,] board;
         public Piece held;
         public bool hasMatch;
+        private int hashCode;
 
         public State(Piece[,] board, Piece held) {
             this.board = board;
@@ -167,6 +167,26 @@ namespace HackMatcher {
                 held = null;
             }
             hasMatch = true;
+        }
+        private void CalculateHashCode() {
+            unchecked {
+                hashCode = 17;
+                foreach (Piece piece in board) {
+                    hashCode *= 31;
+                    if (piece == null) {
+                        continue;
+                    }
+                    hashCode += (int)piece.color;
+                    hashCode *= 31;
+                    hashCode += piece.bomb ? 1 : 0;
+                }
+                if (held != null) {
+                    hashCode *= 31;
+                    hashCode += (int)held.color;
+                    hashCode *= 31;
+                    hashCode += held.bomb ? 1 : 0;
+                }
+            }
         }
 
         public double Eval() {
@@ -206,11 +226,11 @@ namespace HackMatcher {
                         if (board[neighbor.Item1, neighbor.Item2].color != board[start.Item1, start.Item2].color) {
                             continue;
                         }
-                        if (board[neighbor.Item1, neighbor.Item2].gem != board[start.Item1, start.Item2].gem) {
+                        if (board[neighbor.Item1, neighbor.Item2].bomb != board[start.Item1, start.Item2].bomb) {
                             continue;
                         }
                         count++;
-                        if (count >= (board[start.Item1, start.Item2].gem ? 2 : 4)) {
+                        if (count >= (board[start.Item1, start.Item2].bomb ? 2 : 4)) {
                             match = true;
                             hasMatch = true;
                         }
@@ -298,7 +318,10 @@ namespace HackMatcher {
         }
 
         public override int GetHashCode() {
-            return ToString().GetHashCode();
+            if (hashCode == 0) {
+                CalculateHashCode();
+            }
+            return hashCode;
         }
     }
 
@@ -315,7 +338,7 @@ namespace HackMatcher {
             return operation.ToString() + '@' + col;
         }
         public override int GetHashCode() {
-            return ToString().GetHashCode();
+            return (int)operation * 10 + col;
         }
     }
 
