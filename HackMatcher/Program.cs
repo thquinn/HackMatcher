@@ -1,9 +1,4 @@
-﻿// TODO
-//      - Search is slow.
-//          - Improve bottlenecks.
-//          - Parallel While
-
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Drawing;
@@ -12,9 +7,11 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 
+using Move = System.Tuple<System.Tuple<int, int>, System.Tuple<int, int>>;
+
 namespace HackMatcher {
     class Program {
-        public static IntPtr selfHandle;
+        public static IntPtr selfHandle, hWnd;
 
         static void Main(string[] args) {
             // Run EXAPUNKS at 1366*768 resolution and disable HACK*MATCH CRT effect in the settings.
@@ -28,319 +25,271 @@ namespace HackMatcher {
             }
             Process process = processes.OrderBy(e => e.StartTime).First();
             selfHandle = Process.GetCurrentProcess().MainWindowHandle;
-            IntPtr hWnd = process.MainWindowHandle;
+            hWnd = process.MainWindowHandle;
             if (hWnd != IntPtr.Zero) {
                 Util32.handle = hWnd;
             }
             Util32.ForegroundWindow();
 
             while (true) {
-                State state = null;
-                Color heldColor = Color.White;
-                while (state == null) {
-                    //Image image = Image.FromFile("last.png");
-                    Image image = ScreenCapture.CaptureWindow(hWnd);
-                    Bitmap bitmap = new Bitmap(360, 540, System.Drawing.Imaging.PixelFormat.Format24bppRgb);
-                    using (Graphics g = Graphics.FromImage(bitmap)) {
-                        Rectangle srcRect = new Rectangle(312, 110, 360, 540);
-                        Rectangle destRect = new Rectangle(0, 0, 360, 540);
-                        g.DrawImage(image, destRect, srcRect, GraphicsUnit.Pixel);
-                    }
-                    bitmap.Save("last.png");
-                    state = CV.ReadBitmap(bitmap);
-                    heldColor = new Bitmap(image).GetPixel(320, 610);
-                }
-                Console.WriteLine("Holding: " + state.held);
-                List<Move> moves = FindMoves(state, out bool hasMatch);
-                if (moves == null) {
-                    continue;
-                }
-                
-                foreach (Move move in moves) {
-                    Console.WriteLine(move);
-                }
-                Util32.ExecuteMoves(new Queue<Move>(moves));
-                if (hasMatch) {
-                    Console.WriteLine("Found match, sleeping 500ms...");
-                    Thread.Sleep(500);
-                }
+                CaptureAndSolve();
+                Thread.Sleep(2000);
+                Util32.ClickNewGame();
+                Thread.Sleep(5500);
             }
         }
 
-        static List<Move> FindMoves(State state, out bool hasMatch) {
-            hasMatch = false;
-            Console.WriteLine("Searching for a move...");
-            Queue<State> queue = new Queue<State>();
+        static void CaptureAndSolve() {
+            Image image = ScreenCapture.CaptureWindow(hWnd);
+            Bitmap bitmap = new Bitmap(1200, 120, System.Drawing.Imaging.PixelFormat.Format24bppRgb);
+            using (Graphics g = Graphics.FromImage(bitmap)) {
+                Rectangle srcRect = new Rectangle(393, 494, 1200, 120);
+                Rectangle destRect = new Rectangle(0, 0, 1200, 120);
+                g.DrawImage(image, destRect, srcRect, GraphicsUnit.Pixel);
+            }
+            bitmap.Save("last.png");
+            Piece[,] pieces = CV.ReadBitmap(bitmap);
+            if (pieces == null) {
+                return;
+            }
+            State start = new State(pieces);
+            PriorityQueue<int, State> queue = new PriorityQueue<int, State>();
+            queue.Enqueue(0, start);
             Dictionary<State, Tuple<State, Move>> parents = new Dictionary<State, Tuple<State, Move>>();
-            queue.Enqueue(state);
-            double maxEval = double.MinValue;
-            State maxState = null;
-            while (queue.Count > 0 && parents.Count < 25000) {
-                State current = queue.Dequeue();
-                Dictionary<Move, State> children = current.GetChildren();
+            State finalState = null;
+
+            while (true) {
+                if (queue.Count > 100000) {
+                    return;
+                }
+                State state = queue.Dequeue().Value;
+                Dictionary<Move, State> children = state.GetChildren();
+                bool done = false;
                 foreach (KeyValuePair<Move, State> child in children) {
                     if (parents.ContainsKey(child.Value)) {
                         continue;
                     }
-                    parents.Add(child.Value, new Tuple<State, Move>(current, child.Key));
-                    if (parents.Count % 25000 == 0) {
-                        Console.WriteLine("Searched " + parents.Count + " states.");
+                    parents[child.Value] = new Tuple<State, Move>(state, child.Key);
+                    if (child.Value.IsSolved()) {
+                        finalState = child.Value;
+                        done = true;
+                        break;
                     }
-                    queue.Enqueue(child.Value);
-                    // Check eval.
-                    double eval = child.Value.Eval();
-                    eval -= parents.Count / 10000000f;
-                    if (eval > maxEval) {
-                        maxEval = eval;
-                        maxState = child.Value;
-                    }
+                    queue.Enqueue(child.Value.Eval(), child.Value);
+                }
+                if (done) {
+                    break;
                 }
             }
-            Console.WriteLine("Best eval: " + maxEval);
-            List<Move> moves = new List<Move>();
-            if (maxState == null) {
-                moves.Add(new Move(Operation.GRAB_OR_DROP, 0));
-                return moves;
+            if (finalState == null) {
+                Console.WriteLine("No solution found!");
             }
-            while (parents.ContainsKey(maxState)) {
-                Tuple<State, Move> parent = parents[maxState];
-                moves.Add(parent.Item2);
-                maxState = parent.Item1;
+
+            List<Move> moves = new List<Move>();
+            while (true) {
+                if (!parents.ContainsKey(finalState)) {
+                    break;
+                }
+                moves.Add(parents[finalState].Item2);
+                finalState = parents[finalState].Item1;
             }
             moves.Reverse();
-            if (maxState.hasMatch) {
-                hasMatch = true;
-            }
-            return moves;
+            Console.WriteLine(string.Join("\n", moves));
+            Util32.ExecuteMoves(moves);
         }
     }
 
-    public enum PieceColor { RED, PINK, YELLOW, TEAL, PURPLE, UNKNOWN };
-    public class Piece {
-        public PieceColor color;
-        public bool bomb;
+    class State {
+        Piece[,] board;
+        Piece free;
 
-        public Piece(PieceColor color, bool bomb) {
-            this.color = color;
-            this.bomb = bomb;
+        public State(Piece[,] board) {
+            this.board = board;
         }
-        public Piece(Piece other) {
-            this.color = other.color;
-            this.bomb = other.bomb;
+        public State(State other) {
+            board = new Piece[other.board.GetLength(0), other.board.GetLength(1)];
+            for (int x = 0; x < board.GetLength(0); x++) {
+                for (int y = 0; y < board.GetLength(1); y++) {
+                    if (other.board[x, y] != null) {
+                        board[x, y] = new Piece() { suit = other.board[x, y].suit, value = other.board[x, y].value };
+                    }
+                }
+            }
+            if (other.free != null) {
+                free = new Piece() { suit = other.free.suit, value = other.free.value };
+            }
         }
-        
+
+        public Dictionary<Move, State> GetChildren() {
+            Dictionary<Move, State> children = new Dictionary<Move, State>();
+            // Find grabbable stacks.
+            for (int x = 0; x < board.GetLength(0); x++) {
+                for (int y = board.GetLength(1) - 1; y >= 0; y--) {
+                    if (board[x, y] == null) {
+                        continue;
+                    }
+                    if (y < board.GetLength(1) - 1 && board[x, y + 1] != null) {
+                        if (!board[x, y + 1].CanStackOn(board[x, y])) {
+                            break;
+                        }
+                    }
+                    if (y == 3 && board[x, y].value == 0) {
+                        if (board[x, 0].suit == board[x, 3].suit && board[x, 1].suit == board[x, 3].suit && board[x, 2].suit == board[x, 3].suit) {
+                            break;
+                        }
+                    }
+                    // Find places to put this stack.
+                    for (int x2 = 0; x2 < board.GetLength(0); x2++) {
+                        if (x2 == x) {
+                            continue;
+                        }
+                        int y2 = board.GetLength(1) - 1;
+                        while (y2 >= 0 && board[x2, y2] == null) {
+                            y2--;
+                        }
+                        y2++;
+                        if (y2 > 0) {
+                            if (!board[x, y].CanStackOn(board[x2, y2 - 1])) {
+                                continue;
+                            }
+                        }
+                        Move move = new Move(new Tuple<int, int>(x, y), new Tuple<int, int>(x2, y2));
+                        State child = GetChild(move);
+                        if (child != null) {
+                            children.Add(move, GetChild(move));
+                        }
+                    }
+                }
+            }
+            // Freecell.
+            for (int x = 0; x < board.GetLength(0); x++) {
+                int y = board.GetLength(1) - 1;
+                while (y >= 0 && board[x, y] == null) {
+                    y--;
+                }
+                if (y >= 0 && free == null) {
+                    Move move = new Move(new Tuple<int, int>(x, y), new Tuple<int, int>(-1, -1));
+                    children.Add(move, GetChild(move));
+                }
+                if (free != null && (y == -1 || free.CanStackOn(board[x, y]))) {
+                    if (y < 0) {
+                        y = 0;
+                    }
+                    Move move = new Move(new Tuple<int, int>(-1, -1), new Tuple<int, int>(x, y));
+                    State child = GetChild(move);
+                    if (child != null) {
+                        children.Add(move, child);
+                    }
+                }
+            }
+            return children;
+        }
+        private State GetChild(Move move) {
+            State child = new State(this);
+            if (move.Item1.Item1 == -1) { // From freecell.
+                child.board[move.Item2.Item1, move.Item2.Item2] = free;
+                child.free = null;
+            }
+            else if (move.Item2.Item1 == -1) { // To freecell.
+                child.free = child.board[move.Item1.Item1, move.Item1.Item2];
+                child.board[move.Item1.Item1, move.Item1.Item2] = null;
+            }
+            else {
+                for (int dy = 0; move.Item1.Item2 + dy < board.GetLength(1) && board[move.Item1.Item1, move.Item1.Item2 + dy] != null; dy++) {
+                    child.board[move.Item2.Item1, move.Item2.Item2 + dy] = board[move.Item1.Item1, move.Item1.Item2 + dy];
+                    child.board[move.Item1.Item1, move.Item1.Item2 + dy] = null;
+                }
+            }
+            // Check for block of 4 locked face cards not directly on the board.
+            if (move.Item2.Item1 >= 0 && child.board[move.Item2.Item1, move.Item2.Item2].value == 0 && move.Item2.Item2 >= 4) {
+                if (child.board[move.Item2.Item1, move.Item2.Item2].suit == child.board[move.Item2.Item1, move.Item2.Item2 - 1].suit &&
+                    child.board[move.Item2.Item1, move.Item2.Item2].suit == child.board[move.Item2.Item1, move.Item2.Item2 - 2].suit &&
+                    child.board[move.Item2.Item1, move.Item2.Item2].suit == child.board[move.Item2.Item1, move.Item2.Item2 - 3].suit) {
+                    return null;
+                }
+            }
+            return child;
+        }
+
+        public bool IsSolved() {
+            if (free != null) {
+                return false;
+            }
+            for (int x = 0; x < board.GetLength(0); x++) {
+                if (board[x, 0] == null) {
+                    continue;
+                }
+                if (board[x, 0].value != 0 && board[x, 0].value != 10)
+                    return false;
+                for (int y = 1; y < board.GetLength(1); y++) {
+                    if (board[x, y] == null) {
+                        break;
+                    }
+                    if (!board[x, y].CanStackOn(board[x, y - 1])) {
+                        return false;
+                    }
+                }
+            }
+            return true;
+        }
+        public int Eval() {
+            int total = 0;
+            for (int x = 0; x < board.GetLength(0); x++) {
+                for (int y = 1; y < board.GetLength(1); y++) {
+                    if (board[x, y] != null && board[x, y].CanStackOn(board[x, y - 1])) {
+                        total--;
+                    }
+                }
+            }
+            return total;
+        }
+
         public override string ToString() {
-            return color.ToString() + (bomb ? "!" : "");
-        }
-        public string ToString(bool abbrev) {
-            return abbrev ? (int)color + (bomb ? "!" : "") : ToString();
+            StringBuilder sb = new StringBuilder();
+            for (int y = 0; y < board.GetLength(1); y++) {
+                for (int x = 0; x < board.GetLength(0); x++) {
+                    Piece piece = board[x, y];
+                    sb.Append(piece == null ? "  " : piece.ToString());
+                    sb.Append(' ');
+                }
+                sb.Append('\n');
+            }
+            if (free != null) {
+                sb.Append(free.ToString());
+            }
+            return sb.ToString();
         }
         public override bool Equals(object obj) {
-            if (obj.GetType() != typeof(Piece))
+            if (obj.GetType() != typeof(State))
                 return false;
-            Piece other = (Piece)obj;
-            return ToString() == other.ToString();
+            State other = (State)obj;
+            if ((free == null) != (other.free == null)) {
+                return false;
+            }
+            if (free != null) {
+                if (free.suit != other.free.suit || free.value != other.free.value) {
+                    return false;
+                }
+            }
+
+            for (int x = 0; x < board.GetLength(0); x++) {
+                for (int y = 0; y < board.GetLength(1); y++) {
+                    Piece piece = board[x, y];
+                    Piece otherPiece = other.board[x, y];
+                    if ((piece == null) != (otherPiece == null)) {
+                        return false;
+                    }
+                    if (piece != null) {
+                        if (piece.suit != otherPiece.suit || piece.value != otherPiece.value) {
+                            return false;
+                        }
+                    }
+                }
+            }
+            return true;
         }
         public override int GetHashCode() {
             return ToString().GetHashCode();
         }
     }
-
-    public class State {
-        static int[][] NEIGHBORS = new int[][] { new int[] { -1, 0 }, new int[] { 1, 0 }, new int[] { 0, -1 }, new int[] { 0, 1 } };
-        static StringBuilder sb = new StringBuilder();
-        Piece[,] board;
-        public Piece held;
-        public bool hasMatch;
-        private int hashCode;
-
-        public State(Piece[,] board, Piece held) {
-            this.board = board;
-            this.held = held;
-            hasMatch = false;
-        }
-        public State(State other) {
-            board = (Piece[,])other.board.Clone();
-            if (other.held != null) {
-                held = new Piece(other.held);
-            } else {
-                held = null;
-            }
-            hasMatch = true;
-        }
-        private void CalculateHashCode() {
-            unchecked {
-                hashCode = 17;
-                foreach (Piece piece in board) {
-                    hashCode *= 31;
-                    if (piece == null) {
-                        continue;
-                    }
-                    hashCode += (int)piece.color;
-                    hashCode *= 31;
-                    hashCode += piece.bomb ? 1 : 0;
-                }
-                if (held != null) {
-                    hashCode *= 31;
-                    hashCode += (int)held.color;
-                    hashCode *= 31;
-                    hashCode += held.bomb ? 1 : 0;
-                }
-            }
-        }
-
-        public double Eval() {
-            hasMatch = false;
-            double eval = 0;
-            HashSet<Tuple<int, int>> toCheck = new HashSet<Tuple<int, int>>();
-            for (int x = 0; x < 7; x++) {
-                for (int y = 0; y < board.GetLength(1); y++) {
-                    if (board[x, y] == null) {
-                        break;
-                    }
-                    toCheck.Add(new Tuple<int, int>(x, y));
-                }
-            }
-            while (toCheck.Count > 3) {
-                var enumerator = toCheck.GetEnumerator();
-                enumerator.MoveNext();
-                Tuple<int, int> start = enumerator.Current;
-                int count = 1;
-                bool match = false;
-                Queue<Tuple<int, int>> queue = new Queue<Tuple<int, int>>();
-                queue.Enqueue(start);
-                toCheck.Remove(start);
-                while (queue.Count > 0) {
-                    Tuple<int, int> current = queue.Dequeue();
-                    foreach (int[] coor in NEIGHBORS) {
-                        Tuple<int, int> neighbor = new Tuple<int, int>(current.Item1 + coor[0], current.Item2 + coor[1]);
-                        if (neighbor.Item1 < 0 || neighbor.Item1 >= 7) {
-                            continue;
-                        }
-                        if (neighbor.Item2 < 0 || neighbor.Item2 >= board.GetLength(1)) {
-                            continue;
-                        }
-                        if (!toCheck.Contains(neighbor)) {
-                            continue;
-                        }
-                        if (board[neighbor.Item1, neighbor.Item2].color != board[start.Item1, start.Item2].color) {
-                            continue;
-                        }
-                        if (board[neighbor.Item1, neighbor.Item2].bomb != board[start.Item1, start.Item2].bomb) {
-                            continue;
-                        }
-                        count++;
-                        if (count >= (board[start.Item1, start.Item2].bomb ? 2 : 4)) {
-                            match = true;
-                            hasMatch = true;
-                        }
-                        queue.Enqueue(neighbor);
-                        toCheck.Remove(neighbor);
-                    }
-                }
-                eval += count * count;
-                if (match) {
-                    eval += 1000;
-                }
-            }
-            for (int x = 0; x < 7; x++) {
-                int y = board.GetLength(1) - 1;
-                while (y > 0 && board[x, y] == null) {
-                    y--;
-                }
-                if (y > 3) {
-                    eval -= 200 * Math.Pow(2, y - 3);
-                }
-            }
-            return eval;
-        }
-
-        public Dictionary<Move, State> GetChildren() {
-            Dictionary<Move, State> children = new Dictionary<Move, State>();
-            // Grab/drop operations.
-            for (int x = 0; x < 7; x++) {
-                if (held == null) { // Grab.
-                    if (board[x, 0] == null) {
-                        continue;
-                    }
-                    int y = board.GetLength(1) - 1;
-                    while (board[x, y] == null) {
-                        y--;
-                    }
-                    State child = new State(this);
-                    child.held = board[x, y];
-                    child.board[x, y] = null;
-                    children.Add(new Move(Operation.GRAB_OR_DROP, x), child);
-                } else { // Drop.
-                    if (board[x, board.GetLength(1) - 1] != null) {
-                        continue;
-                    }
-                    int y = 0;
-                    while (board[x, y] != null) {
-                        y++;
-                    }
-                    State child = new State(this);
-                    child.board[x, y] = held;
-                    child.held = null;
-                    children.Add(new Move(Operation.GRAB_OR_DROP, x), child);
-                }
-                // Swap.
-                if (board[x, 1] == null) {
-                    continue;
-                }
-                int swapY = board.GetLength(1) - 1;
-                while (board[x, swapY] == null) {
-                    swapY--;
-                }
-                State swapChild = new State(this);
-                swapChild.board[x, swapY] = board[x, swapY - 1];
-                swapChild.board[x, swapY - 1] = board[x, swapY];
-                children.Add(new Move(Operation.SWAP, x), swapChild);
-            }
-            return children;
-        }
-
-        public override string ToString() {
-            sb.Clear();
-            for (int y = 0; y < board.GetLength(1); y++) {
-                for (int x = 0; x < board.GetLength(0); x++) {
-                    if (board[x,y] == null) {
-                        sb.Append('_');
-                        continue;
-                    }
-                    sb.Append(board[x, y].ToString(true));
-                }
-            }
-            if (held != null) {
-                sb.Append(held.ToString(true));
-            }
-            return sb.ToString();
-        }
-
-        public override int GetHashCode() {
-            if (hashCode == 0) {
-                CalculateHashCode();
-            }
-            return hashCode;
-        }
-    }
-
-    public struct Move {
-        public Operation operation;
-        public int col;
-
-        public Move(Operation operation, int col) {
-            this.operation = operation;
-            this.col = col;
-        }
-
-        public override string ToString() {
-            return operation.ToString() + '@' + col;
-        }
-        public override int GetHashCode() {
-            return (int)operation * 10 + col;
-        }
-    }
-
-    public enum Operation { GRAB_OR_DROP, SWAP };
 }
