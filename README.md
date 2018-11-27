@@ -9,7 +9,7 @@ An AI player for the EXAPUNKS minigame "HACK*MATCH"
 </div>
 
 ## How to use
-In the EXAPUNKS options, make it a 1366x768 window and disable the CRT effect in HACK*MATCH. Navigate to the HACK*MATCH title screen and run.
+In the EXAPUNKS options, make it a 1366x768 window and disable the CRT effect in HACK\*MATCH. Navigate to the HACK\*MATCH title screen and run.
 
 ## What's broken?
 More like "what's *not* broken?" The agent definitely won't get 100,000+ points every time; you may need to leave it going for an hour or so.
